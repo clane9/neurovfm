@@ -14,7 +14,7 @@ from torch.nn.modules.utils import _pair
 try:
     from flash_attn.ops.fused_dense import FusedDense
 except ImportError:
-    FusedDense = None
+    from .torch_fallback import FusedDense
 
 
 class PatchEmbed(nn.Module):

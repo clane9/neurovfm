@@ -19,24 +19,30 @@ from torchvision.ops import StochasticDepth
 from torch.utils.checkpoint import checkpoint
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 
-from flash_attn import flash_attn_qkvpacked_func, flash_attn_varlen_qkvpacked_func, flash_attn_varlen_kvpacked_func
-from flash_attn.layers.patch_embed import PatchEmbed
+try:
+    from flash_attn import flash_attn_qkvpacked_func, flash_attn_varlen_qkvpacked_func, flash_attn_varlen_kvpacked_func
+except ImportError:
+    flash_attn_qkvpacked_func = flash_attn_varlen_qkvpacked_func = None
+    flash_attn_varlen_kvpacked_func = None
 
 try:
     from flash_attn.ops.triton.layer_norm import layer_norm_fn, RMSNorm
 except ImportError:
-    layer_norm_fn, RMSNorm = None, None
+    from .torch_fallback import layer_norm_fn, RMSNorm
 
 try:
     from flash_attn.ops.fused_dense import ColumnParallelLinear, FusedDense, RowParallelLinear
 except ImportError:
-    FusedDense, ColumnParallelLinear, RowParallelLinear = None, None, None
+    from .torch_fallback import FusedDense
+    ColumnParallelLinear, RowParallelLinear = None, None
 
-from flash_attn.modules.mlp import FusedMLP
 try:
-    from flash_attn.ops.triton.layer_norm import layer_norm_fn
+    # Importable but None unless the fused_dense_lib extension was built.
+    from flash_attn.modules.mlp import FusedMLP
 except ImportError:
-    layer_norm_fn = None
+    FusedMLP = None
+if FusedMLP is None:
+    from .torch_fallback import FusedMLP
 
 MLP_CHECKPOINT_LVL = 2
 
@@ -164,27 +170,26 @@ class SelfAttention(nn.Module):
             qkv = qkv.reshape(B, N, 3, self.num_heads, self.dim_head).permute(2, 0, 3, 1, 4) # (3, B, num_heads, N, dim_head)
             q, k, v = qkv.unbind(0) # (B, num_heads, N, dim_head)
 
-            # Calculate attention scores
-            # (B, H, N, d) @ (B, H, d, N) -> (B, H, N, N)
-            attn = (q @ k.transpose(-2, -1)) * self.scale
-
-            # Apply the attention mask
             # attn_mask shape (B, N) -> (B, 1, 1, N) to broadcast over heads and query sequence length
-            mask_value = torch.finfo(attn.dtype).min # Use min value of the dtype for masking
-            # mask_value = -torch.inf # Alternative if using float32/64
             attn_mask_expanded = attn_mask.unsqueeze(1).unsqueeze(2) # (B, 1, 1, N)
-            attn = attn.masked_fill(~attn_mask_expanded, mask_value)
 
-            # Softmax and Dropout
-            attn = attn.softmax(dim=-1)
             if return_attn_weights:
+                # SDPA cannot hand back the probabilities, so score the long way round.
+                attn = (q @ k.transpose(-2, -1)) * self.scale
+                attn = attn.masked_fill(~attn_mask_expanded, torch.finfo(attn.dtype).min)
+                attn = attn.softmax(dim=-1)
                 attn_weights_to_return = attn # Store weights after softmax, before dropout
+                attn = F.dropout(attn, p=self.attn_drop, training=self.training)
+                y = attn @ v
+            else:
+                # (B, H, N, N) scores are never materialized here.
+                y = F.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=attn_mask_expanded,
+                    dropout_p=self.attn_drop if self.training else 0.0,
+                    scale=self.scale,
+                )
 
-            attn = F.dropout(attn, p=self.attn_drop, training=self.training)
-
-            # Apply attention to values
-            # (B, H, N, N) @ (B, H, N, d) -> (B, H, N, d)
-            y = attn @ v
             y = y.transpose(1, 2).reshape(B, N, C) # (B, N, C)
 
             # Final projection

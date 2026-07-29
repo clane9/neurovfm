@@ -7,7 +7,10 @@ High-level APIs for loading models and running inference on medical imaging stud
 from .encoder import EncoderPipeline, load_encoder
 from .diagnostic import DiagnosticHead, load_diagnostic_head
 from .preprocessor import StudyPreprocessor
-from .generator import FindingsGenerationPipeline, load_vlm
+try:
+    from .generator import FindingsGenerationPipeline, load_vlm
+except ImportError:
+    FindingsGenerationPipeline, load_vlm = None, None
 from .interpreter import interpret_findings
 
 __all__ = [

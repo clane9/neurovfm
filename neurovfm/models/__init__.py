@@ -35,8 +35,11 @@ from .projector import (
     CustomSequential,
 )
 
-# Vision-Language Model
-from .vlm import VisionLanguageModel
+# Vision-Language Model; optional, it needs outlines/peft/transformers.
+try:
+    from .vlm import VisionLanguageModel
+except ImportError:
+    VisionLanguageModel = None
 
 __all__ = [
     # Transformer components

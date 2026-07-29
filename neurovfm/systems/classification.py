@@ -13,7 +13,11 @@ import torch.nn as nn
 import torch.distributed as dist
 import pytorch_lightning as pl
 import torchmetrics
-import torch_scatter
+
+try:
+    import torch_scatter
+except ImportError:
+    torch_scatter = None
 
 from neurovfm.models import (
     get_vit_backbone,

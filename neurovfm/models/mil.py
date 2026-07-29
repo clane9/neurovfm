@@ -24,7 +24,7 @@ except ImportError:
 try:
     from flash_attn.ops.fused_dense import FusedDense
 except ImportError:
-    FusedDense = None
+    from .torch_fallback import FusedDense
 
 # Import MLP from projector
 from neurovfm.models.projector import MLP
