@@ -191,6 +191,9 @@ def preprocess_image(img_sitk):
         if (counts == 1).all():
             # All sizes are unique - use dimension with largest spacing
             z_dim = np.argmax(original_spacing)
+        elif not (counts == 1).any():
+            # All sizes equal - use dimension with largest spacing
+            z_dim = np.argmax(original_spacing)
         else:
             # Use dimension with unique size (typically slice direction)
             z_dim = np.where(original_size == np.where(counts == 1)[0][0])[0][0]
